@@ -9,8 +9,18 @@ A Matrix-themed chat terminal that runs entirely in the browser. The language mo
 - Green digital-rain background rendered on `<canvas>`
 - Boot animation with staggered blocks and a chime
 - Streaming, token-by-token responses from an in-browser LLM
+- Collapsible YouTube browser: search and play videos in a side panel
 - Model cached in the browser after the first download
 - On-page error log for failed requests
+
+## YouTube browser
+
+Click **YOUTUBE** in the header to open the side panel (or press `Esc` to close).
+
+- Search runs through public Piped/Invidious instances — no API key. The page tries several instances and falls back automatically, and discovers more healthy Invidious instances at runtime.
+- Paste a YouTube URL or an 11-character video ID and press **GO** to play it directly.
+- Playback uses the official `youtube-nocookie.com` embed.
+- Because these are community-run instances, search can occasionally fail or rate-limit; retry or paste a link if that happens.
 
 ## Requirements
 

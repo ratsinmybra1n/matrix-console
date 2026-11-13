@@ -47,6 +47,28 @@
   .inputbar button:disabled { opacity: 0.5; cursor: not-allowed; }
   .log { position: fixed; bottom: 0; left: 0; right: 0; max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.7); border-top: 1px solid #f00; color: #f55; font-size: 11px; padding: 6px 10px; z-index: 20; display: none; }
   .log.show { display: block; }
+  .hdrbtn { background: none; border: 1px solid #00cc33; color: #00ff41; font-family: inherit; font-size: 10px; letter-spacing: 1px; padding: 2px 6px; cursor: pointer; }
+  .hdrbtn:hover { background: rgba(0,255,65,0.12); }
+  .ytp { position: fixed; top: 0; right: 0; bottom: 0; width: min(380px, 100vw); background: rgba(0,0,0,0.94); border-left: 1px solid #00ff41; display: flex; flex-direction: column; transform: translateX(101%); transition: transform 0.25s ease; z-index: 30; }
+  .ytp.open { transform: translateX(0); }
+  .ytp-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid #00ff41; color: #00ff41; letter-spacing: 2px; font-size: 12px; }
+  .ytp-head button { background: none; border: none; color: #00ff41; font-size: 20px; line-height: 1; cursor: pointer; font-family: inherit; }
+  .ytp-form { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid #00cc33; }
+  .ytp-form input { flex: 1; background: #000; color: #00ff41; border: 1px solid #00ff41; padding: 8px; font-family: inherit; font-size: 13px; outline: none; }
+  .ytp-form input:focus { box-shadow: 0 0 6px #00ff41; }
+  .ytp-form button { background: #00ff41; color: #000; border: none; padding: 8px 12px; font-family: inherit; font-weight: bold; cursor: pointer; }
+  .ytp-status { padding: 8px 14px; font-size: 11px; color: #00cc33; min-height: 28px; }
+  .ytp-status.err { color: #f55; }
+  .ytp-player { width: 100%; aspect-ratio: 16 / 9; background: #000; border-bottom: 1px solid #00cc33; position: relative; flex: 0 0 auto; }
+  .ytp-player iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .ytp-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #00cc33; font-size: 11px; letter-spacing: 3px; }
+  .ytp-results { flex: 1; overflow-y: auto; }
+  .ytp-item { display: flex; gap: 10px; width: 100%; text-align: left; padding: 8px 12px; background: none; border: none; border-bottom: 1px solid rgba(0,255,65,0.15); color: #66ff99; font-family: inherit; cursor: pointer; }
+  .ytp-item:hover { background: rgba(0,255,65,0.08); }
+  .ytp-item img { width: 88px; height: 50px; object-fit: cover; flex: 0 0 auto; border: 1px solid #00cc33; background: #111; }
+  .ytp-item .t { font-size: 12px; line-height: 1.35; color: #00ff41; }
+  .ytp-item .meta { font-size: 11px; color: #00cc33; margin-top: 4px; }
+  @media (min-width: 900px) { #term { transition: margin-right 0.25s ease; } body.yt-open #term { margin-right: min(380px, 100vw); } }
   @keyframes blink { 50% { opacity: 0; } }
   .cursor::after { content: "▊"; color: #66ff99; animation: blink 1s step-end infinite; }
 </style>
@@ -66,7 +88,7 @@
   <div id="term">
     <div class="header">
       <div class="title">MATRIX TERMINAL</div>
-      <div class="sub">user: Neo  ·  <select id="model" aria-label="Model"></select>  ·  webgpu</div>
+      <div class="sub">user: Neo  ·  <select id="model" aria-label="Model"></select>  ·  webgpu  ·  <button id="ytToggle" class="hdrbtn" type="button">YOUTUBE</button></div>
     </div>
     <div id="messages"></div>
     <div class="inputbar">
@@ -75,6 +97,16 @@
     </div>
   </div>
   <div id="log" class="log"></div>
+  <aside id="ytPanel" class="ytp" aria-hidden="true" aria-label="YouTube browser">
+    <div class="ytp-head"><span>YOUTUBE BROWSER</span><button id="ytClose" type="button" aria-label="Close YouTube panel">×</button></div>
+    <form id="ytForm" class="ytp-form">
+      <input id="ytInput" type="search" placeholder="search or paste a link..." autocomplete="off" />
+      <button type="submit">GO</button>
+    </form>
+    <div id="ytStatus" class="ytp-status">search the tube, or paste a video link</div>
+    <div class="ytp-player" id="ytPlayer"><div class="ytp-empty">NO SIGNAL</div></div>
+    <div id="ytResults" class="ytp-results"></div>
+  </aside>
 </div>
 <script>
   const canvas = document.getElementById('rain');
@@ -206,6 +238,167 @@
   }
   send.addEventListener('click', sendMsg);
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+
+  // --- YouTube browser (keyless: Piped / Invidious fallback chain) ---
+  const ytPanel = document.getElementById('ytPanel');
+  const ytInput = document.getElementById('ytInput');
+  const ytStatus = document.getElementById('ytStatus');
+  const ytResults = document.getElementById('ytResults');
+  const ytPlayer = document.getElementById('ytPlayer');
+  const YT_INSTANCES = [
+    { type: 'piped', base: 'https://api.piped.private.coffee' },
+    { type: 'piped', base: 'https://pipedapi.ducks.party' },
+    { type: 'invidious', base: 'https://yt.chocolatemoo53.com' }
+  ];
+  let lastYtInstance = null, ytDiscovered = false;
+
+  function setYtOpen(open) {
+    ytPanel.classList.toggle('open', open);
+    ytPanel.setAttribute('aria-hidden', String(!open));
+    document.body.classList.toggle('yt-open', open);
+    if (open) setTimeout(() => ytInput.focus(), 260);
+  }
+  document.getElementById('ytToggle').addEventListener('click', () => setYtOpen(!ytPanel.classList.contains('open')));
+  document.getElementById('ytClose').addEventListener('click', () => setYtOpen(false));
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ytPanel.classList.contains('open')) setYtOpen(false); });
+
+  function ytSetStatus(text, isErr) {
+    ytStatus.textContent = text;
+    ytStatus.classList.toggle('err', !!isErr);
+  }
+
+  async function ytFetchJson(url, ms) {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), ms || 9000);
+    try {
+      const r = await fetch(url, { signal: c.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.json();
+    } finally { clearTimeout(t); }
+  }
+
+  function ytParseId(q) {
+    const s = q.trim();
+    if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+    const m = s.match(/(?:[?&]v=|youtu\.be\/|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  function ytFmtDur(d) {
+    if (d == null) return '';
+    if (typeof d === 'string' && d.indexOf(':') !== -1) return d;
+    const n = Number(d);
+    if (!isFinite(n)) return '';
+    const h = Math.floor(n / 3600), m = Math.floor((n % 3600) / 60), s = Math.floor(n % 60);
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s).padStart(2, '0');
+  }
+
+  async function ytSearchInstance(inst, q) {
+    if (inst.type === 'piped') {
+      const j = await ytFetchJson(inst.base + '/search?q=' + encodeURIComponent(q) + '&filter=videos');
+      return (j.items || []).map((it) => ({
+        id: ((it.url || '').split('v=')[1] || '').slice(0, 11),
+        title: it.title,
+        author: it.uploaderName,
+        thumb: it.thumbnail,
+        dur: it.duration
+      })).filter((x) => x.id);
+    }
+    const j = await ytFetchJson(inst.base + '/api/v1/search?q=' + encodeURIComponent(q) + '&type=video');
+    return (Array.isArray(j) ? j : []).map((it) => ({
+      id: it.videoId,
+      title: it.title,
+      author: it.author,
+      thumb: (it.videoThumbnails && it.videoThumbnails[0] && it.videoThumbnails[0].url) || '',
+      dur: it.lengthSeconds
+    })).filter((x) => x.id);
+  }
+
+  async function ytDiscover() {
+    if (ytDiscovered) return;
+    ytDiscovered = true;
+    try {
+      const list = await ytFetchJson('https://api.invidious.io/instances.json?sort_by=health', 8000);
+      for (const entry of list) {
+        const name = entry[0], info = entry[1];
+        if (!info || info.type !== 'https' || !info.api || !info.cors) continue;
+        const base = 'https://' + name;
+        if (!YT_INSTANCES.some((i) => i.base === base)) YT_INSTANCES.push({ type: 'invidious', base });
+      }
+    } catch (e) {}
+  }
+
+  function ytRender(items) {
+    ytResults.replaceChildren();
+    for (const it of items.slice(0, 30)) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'ytp-item';
+      const img = document.createElement('img');
+      img.loading = 'lazy'; img.alt = ''; img.src = it.thumb || '';
+      img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+      const box = document.createElement('div');
+      const t = document.createElement('div');
+      t.className = 't'; t.textContent = it.title || '(untitled)';
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = [it.author, ytFmtDur(it.dur)].filter(Boolean).join(' · ');
+      box.append(t, meta); b.append(img, box);
+      b.addEventListener('click', () => ytPlay(it.id, it.title));
+      ytResults.appendChild(b);
+    }
+  }
+
+  function ytPlay(id, title) {
+    ytPlayer.replaceChildren();
+    const f = document.createElement('iframe');
+    f.src = 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&rel=0';
+    f.title = title || 'YouTube video';
+    f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+    f.allowFullscreen = true;
+    ytPlayer.appendChild(f);
+    ytSetStatus('playing: ' + (title || id));
+  }
+
+  async function ytSearch(q) {
+    const direct = ytParseId(q);
+    if (direct) { ytPlay(direct, q); return; }
+    ytSetStatus('searching...');
+    ytResults.replaceChildren();
+    const tried = new Set();
+    async function attempt(list) {
+      for (const inst of list) {
+        if (tried.has(inst.base)) continue;
+        tried.add(inst.base);
+        try {
+          const items = await ytSearchInstance(inst, q);
+          if (!items.length) continue;
+          lastYtInstance = inst;
+          ytRender(items);
+          ytSetStatus(items.length + ' results via ' + inst.base.replace('https://', ''));
+          return true;
+        } catch (e) {}
+      }
+      return false;
+    }
+    const ordered = () => {
+      const list = YT_INSTANCES.slice();
+      if (lastYtInstance) {
+        const i = list.findIndex((x) => x.base === lastYtInstance.base);
+        if (i > 0) list.unshift(list.splice(i, 1)[0]);
+      }
+      return list;
+    };
+    if (await attempt(ordered())) return;
+    await ytDiscover();
+    if (await attempt(ordered())) return;
+    ytSetStatus('no instance responded. try again, or paste a youtu.be link.', true);
+  }
+
+  document.getElementById('ytForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = ytInput.value.trim();
+    if (q) ytSearch(q);
+  });
   const logEl = document.getElementById('log');
   function logErr(msg) {
     console.error(msg);
