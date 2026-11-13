@@ -154,7 +154,12 @@
     if (engine) return engine;
     if (enginePromise) return enginePromise;
     enginePromise = (async () => {
-      if (!navigator.gpu) throw new Error("WebGPU is not available. Use Chrome/Edge 113+ (or another WebGPU-capable browser).");
+      if (!navigator.gpu) {
+        const brave = navigator.brave !== undefined;
+        throw new Error(brave
+          ? "WebGPU is off because Brave's hardware acceleration is disabled. Open brave://settings/system, enable 'Use graphics acceleration when available', then fully quit and reopen Brave. Check brave://gpu to confirm WebGPU is available."
+          : "WebGPU is not available. Enable hardware acceleration in your browser settings, update to Chrome/Edge 113+, and check your browser's GPU page (chrome://gpu) for WebGPU status.");
+      }
       addMsg('sys', 'Waking the Matrix core (' + MODELS[modelId] + ')… first run downloads the model, then it is cached in your browser.');
       const progress = addMsg('sys', 'Loading model...');
       const webllm = await import(WEBLLM_URL);
