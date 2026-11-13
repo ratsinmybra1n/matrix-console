@@ -46,6 +46,7 @@
   .log { position: fixed; bottom: 0; left: 0; right: 0; max-height: 120px; overflow-y: auto; background: rgba(0,0,0,0.7); border-top: 1px solid #f00; color: #f55; font-size: 11px; padding: 6px 10px; z-index: 20; display: none; }
   .log.show { display: block; }
   @keyframes blink { 50% { opacity: 0; } }
+  .cursor::after { content: "▊"; color: #ff99ff; animation: blink 1s step-end infinite; }
 </style>
 </head>
 <body>
@@ -63,11 +64,11 @@
   <div id="term">
     <div class="header">
       <div class="title">MATRIX TERMINAL</div>
-      <div class="sub">user: Neo  ·  model: ollama  ·  matrix mode</div>
+      <div class="sub">user: Neo  ·  model: qwen2.5-1.5b ·  webgpu ·  matrix mode</div>
     </div>
     <div id="messages"></div>
     <div class="inputbar">
-      <textarea id="inp" rows="3" placeholder="type a message..."></textarea>
+      <textarea id="inp" rows="3" placeholder="type a message... (first send loads the in-browser model)"></textarea>
       <button id="send">SEND</button>
     </div>
   </div>
@@ -108,16 +109,41 @@
   setTimeout(bootChime, 200);
   const boot = document.getElementById('boot');
   const term = document.getElementById('term');
-  setTimeout(() => { boot.classList.add('fade'); setTimeout(() => { boot.style.display = 'none'; term.classList.add('show'); }, 800); }, 2000);
+  setTimeout(() => { boot.classList.add('fade'); setTimeout(() => { boot.style.display = 'none'; term.classList.add('show'); addMsg('sys', 'Matrix core offline. Send a message to boot it — first run downloads the model (~1 GB), then it is cached.'); }, 800); }, 2000);
   const msgs = document.getElementById('messages');
   const inp = document.getElementById('inp');
   const send = document.getElementById('send');
   const history = [];
-  const MODEL = "qwen3.5:4b";
+  // Runs entirely in the browser via WebGPU (no server). Model is cached after first download.
+  const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+  const WEBLLM_URL = "https://esm.run/@mlc-ai/web-llm";
+  const SYS_PROMPT = "You are Matrix, a helpful AI assistant. Be concise, friendly, helpful. The user is Neo.";
+  let engine = null, enginePromise = null;
   function addMsg(role, text) {
     const d = document.createElement('div');
     d.className = 'msg ' + role; d.textContent = text;
     msgs.appendChild(d); msgs.scrollTop = msgs.scrollHeight; return d;
+  }
+  async function getEngine() {
+    if (engine) return engine;
+    if (enginePromise) return enginePromise;
+    enginePromise = (async () => {
+      if (!navigator.gpu) throw new Error("WebGPU is not available. Use Chrome/Edge 113+ (or another WebGPU-capable browser).");
+      addMsg('sys', 'Waking the Matrix core... first run downloads the model (~1 GB), then it is cached in your browser.');
+      const progress = addMsg('sys', 'Loading model...');
+      const webllm = await import(WEBLLM_URL);
+      const eng = await webllm.CreateMLCEngine(MODEL_ID, {
+        initProgressCallback: (p) => {
+          progress.textContent = p.text;
+          msgs.scrollTop = msgs.scrollHeight;
+        }
+      });
+      progress.remove();
+      engine = eng;
+      return eng;
+    })();
+    try { return await enginePromise; }
+    catch (e) { enginePromise = null; throw e; }
   }
   async function sendMsg() {
     const text = inp.value.trim(); if (!text) return;
@@ -126,28 +152,25 @@
     const aiDiv = addMsg('ai', ''); let full = '';
     const cursor = document.createElement('span'); cursor.className = 'cursor'; aiDiv.appendChild(cursor);
     try {
-      const res = await fetch('http://localhost:11434/api/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: MODEL, messages: [{ role: 'system', content: "You are Matrix, a helpful AI assistant. Be concise, friendly, helpful. The user is Neo." }, ...history], stream: true, think: false })
+      const eng = await getEngine();
+      const stream = await eng.chat.completions.create({
+        messages: [{ role: 'system', content: SYS_PROMPT }, ...history],
+        stream: true,
+        temperature: 0.7
       });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const reader = res.body.getReader(); const dec = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read(); if (done) break;
-        const chunk = dec.decode(value, { stream: true });
-        for (const line of chunk.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            const j = JSON.parse(line);
-            if (j.message && j.message.content) {
-              full += j.message.content; aiDiv.textContent = full; aiDiv.appendChild(cursor); msgs.scrollTop = msgs.scrollHeight;
-            }
-          } catch (e) {}
-        }
+      for await (const chunk of stream) {
+        const delta = (chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content) || '';
+        if (!delta) continue;
+        full += delta; aiDiv.textContent = full; aiDiv.appendChild(cursor); msgs.scrollTop = msgs.scrollHeight;
       }
-      aiDiv.removeChild(cursor); history.push({ role: 'assistant', content: full });
+      if (!full) aiDiv.textContent = '(no response)';
+      if (cursor.parentNode === aiDiv) aiDiv.removeChild(cursor);
+      history.push({ role: 'assistant', content: full });
     } catch (e) {
-      aiDiv.removeChild(cursor); aiDiv.textContent = '[error: ' + e.message + ']  (is Ollama running? ollama serve; model pulled?)';
+      if (cursor.parentNode === aiDiv) aiDiv.removeChild(cursor);
+      aiDiv.textContent = '[error: ' + e.message + ']';
+      logErr('Chat failed: ' + e.message);
+      history.pop();
     } finally { send.disabled = false; inp.focus(); }
   }
   send.addEventListener('click', sendMsg);
