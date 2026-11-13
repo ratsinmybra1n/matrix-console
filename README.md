@@ -6,7 +6,7 @@ A Matrix-themed chat terminal that runs entirely in the browser. The language mo
 
 ## Features
 
-- Magenta digital-rain background rendered on `<canvas>`
+- Green digital-rain background rendered on `<canvas>`
 - Boot animation with staggered blocks and a chime
 - Streaming, token-by-token responses from an in-browser LLM
 - Model cached in the browser after the first download
