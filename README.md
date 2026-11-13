@@ -30,13 +30,15 @@ Then open <http://localhost:8000/> and send a message. The first message downloa
 
 ## Configuration
 
-The model is set near the bottom of `index.html`:
+The model picker in the header offers three sizes:
 
-```js
-const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
-```
+| Option | Model ID | First download | Notes |
+| --- | --- | --- | --- |
+| Fastest | `Qwen2.5-0.5B-Instruct-q4f16_1-MLC` | ~0.5 GB | Low-end GPUs |
+| Balanced (default) | `Qwen2.5-1.5B-Instruct-q4f16_1-MLC` | ~1 GB | Good all-round demo |
+| Stronger | `Qwen2.5-3B-Instruct-q4f16_1-MLC` | ~2 GB | Slower, better answers |
 
-Any model from the [WebLLM prebuilt model list](https://github.com/mlc-ai/web-llm/blob/main/src/config.ts) can be used — smaller models load faster, larger ones answer better. The system prompt lives in `SYS_PROMPT` just above it.
+The choice is saved in `localStorage` (`matrix-model`) and remembered across visits. Edit the `MODELS` object near the bottom of `index.html` to add or remove entries — any model from the [WebLLM prebuilt model list](https://github.com/mlc-ai/web-llm/blob/main/src/config.ts) works. The system prompt lives in `SYS_PROMPT` just above it.
 
 ## Deployment
 

@@ -30,6 +30,8 @@
   .header { padding: 12px 18px; border-bottom: 1px solid #ff00ff; border: 1px solid #000; background: rgba(0,0,0,0.4); display: flex; justify-content: space-between; font-size: 13px; letter-spacing: 2px; }
   .header .title { color: #ff00ff; text-shadow: 0 0 6px #ff00ff; }
   .header .sub { color: #cc00cc; font-size: 11px; }
+  .header select { background: #000; color: #ff00ff; border: 1px solid #cc00cc; font-family: inherit; font-size: 11px; padding: 2px 4px; letter-spacing: 1px; outline: none; cursor: pointer; }
+  .header select:disabled { opacity: 0.6; cursor: not-allowed; }
   #messages { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
   .msg { max-width: 90%; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
   .msg.user { align-self: flex-start; color: #ff00ff; border-left: 2px solid #ff00ff; padding-left: 10px; }
@@ -64,7 +66,7 @@
   <div id="term">
     <div class="header">
       <div class="title">MATRIX TERMINAL</div>
-      <div class="sub">user: Neo  ·  model: qwen2.5-1.5b ·  webgpu ·  matrix mode</div>
+      <div class="sub">user: Neo  ·  <select id="model" aria-label="Model"></select>  ·  webgpu</div>
     </div>
     <div id="messages"></div>
     <div class="inputbar">
@@ -109,16 +111,40 @@
   setTimeout(bootChime, 200);
   const boot = document.getElementById('boot');
   const term = document.getElementById('term');
-  setTimeout(() => { boot.classList.add('fade'); setTimeout(() => { boot.style.display = 'none'; term.classList.add('show'); addMsg('sys', 'Matrix core offline. Send a message to boot it — first run downloads the model (~1 GB), then it is cached.'); }, 800); }, 2000);
+  setTimeout(() => { boot.classList.add('fade'); setTimeout(() => { boot.style.display = 'none'; term.classList.add('show'); addMsg('sys', 'Matrix core offline. Pick a model above, then send a message to boot it — first run downloads that model, then it is cached.'); }, 800); }, 2000);
   const msgs = document.getElementById('messages');
   const inp = document.getElementById('inp');
   const send = document.getElementById('send');
   const history = [];
   // Runs entirely in the browser via WebGPU (no server). Model is cached after first download.
-  const MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+  const MODELS = {
+    "Qwen2.5-0.5B-Instruct-q4f16_1-MLC": "Qwen2.5 0.5B · fastest",
+    "Qwen2.5-1.5B-Instruct-q4f16_1-MLC": "Qwen2.5 1.5B · balanced",
+    "Qwen2.5-3B-Instruct-q4f16_1-MLC": "Qwen2.5 3B · stronger"
+  };
+  const DEFAULT_MODEL = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
+  const STORAGE_KEY = "matrix-model";
   const WEBLLM_URL = "https://esm.run/@mlc-ai/web-llm";
   const SYS_PROMPT = "You are Matrix, a helpful AI assistant. Be concise, friendly, helpful. The user is Neo.";
+  let modelId = DEFAULT_MODEL;
   let engine = null, enginePromise = null;
+  try { const saved = localStorage.getItem(STORAGE_KEY); if (saved && MODELS[saved]) modelId = saved; } catch (e) {}
+  const modelSel = document.getElementById('model');
+  for (const id of Object.keys(MODELS)) {
+    const opt = document.createElement('option');
+    opt.value = id; opt.textContent = MODELS[id];
+    modelSel.appendChild(opt);
+  }
+  modelSel.value = modelId;
+  modelSel.addEventListener('change', async () => {
+    const next = modelSel.value;
+    if (!MODELS[next] || next === modelId) return;
+    modelId = next;
+    try { localStorage.setItem(STORAGE_KEY, modelId); } catch (e) {}
+    const old = engine; engine = null; enginePromise = null;
+    if (old) { try { await old.unload(); } catch (e) {} }
+    addMsg('sys', 'Core set to ' + MODELS[modelId] + '. Send a message to load it (downloads once).');
+  });
   function addMsg(role, text) {
     const d = document.createElement('div');
     d.className = 'msg ' + role; d.textContent = text;
@@ -129,10 +155,10 @@
     if (enginePromise) return enginePromise;
     enginePromise = (async () => {
       if (!navigator.gpu) throw new Error("WebGPU is not available. Use Chrome/Edge 113+ (or another WebGPU-capable browser).");
-      addMsg('sys', 'Waking the Matrix core... first run downloads the model (~1 GB), then it is cached in your browser.');
+      addMsg('sys', 'Waking the Matrix core (' + MODELS[modelId] + ')… first run downloads the model, then it is cached in your browser.');
       const progress = addMsg('sys', 'Loading model...');
       const webllm = await import(WEBLLM_URL);
-      const eng = await webllm.CreateMLCEngine(MODEL_ID, {
+      const eng = await webllm.CreateMLCEngine(modelId, {
         initProgressCallback: (p) => {
           progress.textContent = p.text;
           msgs.scrollTop = msgs.scrollHeight;
@@ -148,7 +174,7 @@
   async function sendMsg() {
     const text = inp.value.trim(); if (!text) return;
     inp.value = ''; addMsg('user', text); history.push({ role: 'user', content: text });
-    send.disabled = true;
+    send.disabled = true; modelSel.disabled = true;
     const aiDiv = addMsg('ai', ''); let full = '';
     const cursor = document.createElement('span'); cursor.className = 'cursor'; aiDiv.appendChild(cursor);
     try {
@@ -171,7 +197,7 @@
       aiDiv.textContent = '[error: ' + e.message + ']';
       logErr('Chat failed: ' + e.message);
       history.pop();
-    } finally { send.disabled = false; inp.focus(); }
+    } finally { send.disabled = false; modelSel.disabled = false; inp.focus(); }
   }
   send.addEventListener('click', sendMsg);
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
